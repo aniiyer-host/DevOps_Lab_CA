@@ -1,0 +1,9 @@
+services:
+  secure-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: secure-api
+    ports:
+      - "5002:5000"
+    restart: unless-stopped
