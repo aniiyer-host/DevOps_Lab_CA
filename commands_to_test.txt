@@ -1,0 +1,5 @@
+For policies:-
+conftest test Dockerfile --policy policies/ --parser dockerfile
+
+For app:-
+pytest in venv
