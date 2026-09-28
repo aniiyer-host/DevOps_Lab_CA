@@ -3,3 +3,6 @@ conftest test Dockerfile --policy policies/ --parser dockerfile
 
 For app:-
 pytest in venv
+
+To run app :-
+.venv/bin/python app/app.py
