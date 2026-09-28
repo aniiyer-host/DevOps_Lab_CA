@@ -1,6 +1,6 @@
 # Automated Policy-Gated Secure Container CI/CD Pipeline
 
-A DevSecOps-oriented CI/CD pipeline that automatically tests, security-validates, builds, and deploys a containerized application using **GitHub Actions, Docker, Docker Compose, and Open Policy Agent (OPA) with Conftest**.
+A DevSecOps-oriented CI/CD pipeline that automatically tests, security-validates, builds, and deploys a containerized configuration management REST API service using **GitHub Actions, Docker, Docker Compose, and Open Policy Agent (OPA) with Conftest**.
 
 The project demonstrates how **Policy as Code** can be integrated directly into a CI pipeline so that insecure container configurations are detected and rejected before the Docker image is built.
 
@@ -12,7 +12,7 @@ Traditional CI/CD pipelines primarily focus on whether an application works corr
 
 Before a Docker image is built, the Dockerfile is evaluated against predefined security policies using **OPA/Conftest**.
 
-The pipeline follows:
+The pipeline workflow:
 
 ```text
 Developer
@@ -23,7 +23,7 @@ Developer
     ▼
 GitHub Actions
     │
-    ├── Automated Tests
+    ├── Automated Tests (Pytest)
     │
     ├── OPA/Conftest Security Policies
     │       │
@@ -51,7 +51,7 @@ The primary objective is to ensure that security requirements are enforced autom
 * Automatically reject insecure container configurations.
 * Build the Docker image only after security validation succeeds.
 * Deploy the container using Docker Compose.
-* Demonstrate policy enforcement through intentional CI failures.
+* Demonstrate policy enforcement through intentional CI failures and recovery scenarios.
 
 ---
 
@@ -62,7 +62,8 @@ The primary objective is to ensure that security requirements are enforced autom
 | Git               | Version control              |
 | GitHub            | Source code hosting          |
 | GitHub Actions    | CI/CD automation             |
-| Python / Flask    | Application                  |
+| Python / Flask    | Application framework        |
+| Flask-SQLAlchemy  | Database ORM                 |
 | Pytest            | Automated testing            |
 | Docker            | Application containerization |
 | Docker Compose    | Container deployment         |
@@ -78,89 +79,104 @@ The primary objective is to ensure that security requirements are enforced autom
 secure-container-cicd/
 │
 ├── app/
-│   ├── app.py
-│   └── requirements.txt
+│   ├── __init__.py         # Application factory pattern & extension init
+│   ├── app.py              # Blueprint routes & entrypoint
+│   ├── models.py           # SQLAlchemy Configuration model
+│   ├── config/             # Environment-specific configuration package
+│   │   ├── __init__.py
+│   │   ├── default.py
+│   │   ├── development.py
+│   │   ├── production.py
+│   │   └── .env.example
+│   └── requirements.txt    # Application dependencies
 │
 ├── tests/
-│   └── test_app.py
+│   └── test_app.py         # Pytest suite with app/client fixtures
+│
+├── fixtures/
+│   └── Dockerfile.*        # Intentionally insecure policy demonstrations
 │
 ├── policies/
-│   └── dockerfile.rego
+│   └── dockerfile.rego     # OPA Rego policies
 │
 ├── .github/
 │   └── workflows/
-│       └── ci.yml
+│       └── ci.yml          # GitHub Actions workflow
 │
 ├── Dockerfile
 ├── docker-compose.yml
 ├── .dockerignore
 ├── .gitignore
+├── context.md
 └── README.md
 ```
 
 ---
 
-# Application
+# Application Capabilities
 
-The current application is a lightweight Flask API used to demonstrate the CI/CD and security pipeline.
+The application is a realistic **Configuration Management REST API service** built with Flask, SQLAlchemy ORM, and blueprint-based routing.
 
-It exposes:
+It provides environment management artifacts and database entities that are validated by the Policy-as-Code pipeline.
 
-### Root endpoint
+### Endpoints
 
-```text
-GET /
+| Method | Endpoint | Description |
+| --- | --- | --- |
+| `GET` | `/` | Service root status and environment info |
+| `GET` | `/health` | Service health check |
+| `GET` | `/configs` | List all configuration records |
+| `POST` | `/configs` | Create a new configuration (`key`, `value`, `description`, `environment`) |
+| `GET` | `/configs/<id>` | Get configuration by ID |
+| `PUT` | `/configs/<id>` | Update configuration fields (`value`, `description`, `environment`) |
+| `DELETE` | `/configs/<id>` | Delete configuration record |
+| `GET` | `/configs/<key>` | Get configuration by key string |
+
+### Example API Usage
+
+#### List Configurations
+```bash
+curl http://localhost:5000/configs
 ```
 
 Example response:
-
 ```json
 {
-  "message": "Secure DevSecOps API is running",
+  "count": 1,
+  "data": [
+    {
+      "created_at": "2026-09-26T13:54:21.054836",
+      "description": "Production environment flag",
+      "environment": "development",
+      "id": 1,
+      "key": "app.env",
+      "updated_at": "2026-09-26T13:54:21.054841",
+      "value": "production"
+    }
+  ],
   "status": "success"
 }
 ```
 
-### Health endpoint
-
-```text
-GET /health
+#### Create Configuration
+```bash
+curl -X POST http://localhost:5000/configs \
+  -H "Content-Type: application/json" \
+  -d '{"key": "db.timeout", "value": "30", "description": "Database timeout in seconds"}'
 ```
-
-Example response:
-
-```json
-{
-  "status": "healthy"
-}
-```
-
-The application can later be replaced with a more realistic application without changing the overall CI/CD architecture.
 
 ---
 
 # Docker Configuration
 
-The application is containerized using the following security principles:
+The application is containerized using security principles:
 
-* A specific Python base image is used.
-* The `latest` tag is prohibited.
-* A dedicated non-root user is created.
-* The container explicitly switches to the non-root user.
-* Application dependencies are installed inside the container.
-* Only the required application port is exposed.
-
-The container currently uses:
-
-```dockerfile
-FROM python:3.12-slim
-```
-
-and runs as:
-
-```dockerfile
-USER appuser
-```
+* Approved base image: `python:3.12-slim`.
+* Mutable `latest` tag is prohibited.
+* Dedicated non-root user `appuser` created and used.
+* Explicit `/app` working directory and HTTP health check are configured.
+* Application dependencies installed securely inside container.
+* Port 5000 exposed.
 
 ---
 
@@ -172,137 +188,130 @@ Security requirements are defined as Rego policies in:
 policies/dockerfile.rego
 ```
 
-Conftest parses the Dockerfile and evaluates it against these policies.
+Conftest parses the `Dockerfile` and evaluates it against these policies.
 
-The current policy set contains four security controls.
+### Active Security Controls
 
-## 1. Prevent Root Execution
+| Policy | Purpose | Example violation | Remediation |
+| --- | --- | --- | --- |
+| Deny root execution | Keep the container process non-root, including UID `0`. | `USER root` or `USER 0` | Create/use an unprivileged account, such as `appuser`. |
+| Deny `latest` | Avoid silently changing base-image contents between builds. | `FROM python:latest` | Use an explicit version tag. |
+| Require approved base image | Limit the build to the reviewed `python:3.12-slim` image. | `FROM python:3.12` | Use exactly `python:3.12-slim`. |
+| Require explicit `USER` | Make the runtime identity visible and reviewable. | No `USER` instruction | Add `USER appuser` after creating the account. |
+| Require `HEALTHCHECK` | Let Docker report whether the service responds to its health endpoint. | Missing `HEALTHCHECK` | Add a check for `/health` with a bounded timeout. |
+| Require `WORKDIR` | Make relative paths and command execution predictable. | Missing `WORKDIR` | Declare the application directory, such as `WORKDIR /app`. |
+| Deny sensitive `COPY`/`ADD` sources | Avoid copying repository metadata and common local-secret paths into image layers. | `COPY .env /app/.env` or `ADD .ssh /app/.ssh` | Exclude the path from the build context and copy only required files. |
+| Deny hardcoded secret assignments | Catch obvious literal values assigned to secret-like `ENV`/`ARG` keys. | `ENV API_TOKEN=hardcoded-demo-token` | Supply secrets at runtime through an appropriate secret mechanism; do not bake them into the image. |
 
-The Dockerfile must not explicitly configure:
-
-```dockerfile
-USER root
-```
-
-Violation:
-
-```text
-Container must not run as root
-```
-
----
-
-## 2. Prevent the `latest` Tag
-
-Base images must not use the mutable `latest` tag.
-
-For example:
-
-```dockerfile
-FROM python:latest
-```
-
-is rejected.
-
-Violation:
-
-```text
-Base images must not use the latest tag
-```
+The secret rule inspects only secret-like `ENV`/`ARG` assignments. It permits common variable references and placeholders; it is a guard against obvious mistakes, not a general-purpose secret scanner.
+`fixtures/Dockerfile.secret-reference` is a passing example: it uses `${API_TOKEN}` and includes ordinary `PASSWORD_LABEL` and `RUN` text without triggering the rule.
 
 ---
 
-## 3. Require an Approved Base Image
+# Local Development & Testing
 
-The current project requires:
-
-```dockerfile
-FROM python:3.12-slim
-```
-
-An alternative base image such as:
-
-```dockerfile
-FROM ubuntu:24.04
-```
-
-is rejected.
-
-Violation:
-
-```text
-Dockerfile must use the approved base image: python:3.12-slim
-```
-
-This policy can later be modified to support an approved list of multiple images rather than a single image.
-
----
-
-## 4. Require an Explicit USER Instruction
-
-The Dockerfile must explicitly define a user.
-
-A Dockerfile without a `USER` instruction is rejected.
-
-Violation:
-
-```text
-Dockerfile must explicitly define a non-root USER
-```
-
----
-
-# Local Testing
-
-## 1. Create the Python environment
+## 1. Environment Setup
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-```
-
-Install dependencies:
-
-```bash
 pip install -r app/requirements.txt
 pip install pytest
 ```
 
----
-
 ## 2. Run Application Tests
 
 ```bash
-pytest
+python -m pytest tests/ -v
 ```
 
-The application tests verify the `/` and `/health` endpoints.
+All unit tests run against an isolated in-memory SQLite database and test app context.
+
+## 3. Run Application Locally
+
+```bash
+python app/app.py
+```
+
+Or with custom port / environment:
+
+```bash
+PORT=5001 FLASK_ENV=development python app/app.py
+```
 
 ---
 
 # Running Conftest Locally
 
-Conftest can be used to validate the Dockerfile before pushing changes.
-
-Run:
+Validate policy compliance before committing:
 
 ```bash
 conftest test Dockerfile --policy policies/ --parser dockerfile
 ```
 
-A valid Dockerfile should pass all four policies.
+Expected output:
+```text
+8 tests, 8 passed, 0 warnings, 0 failures, 0 exceptions
+```
+
+The same command is run by the `Validate Dockerfile security policies` step in GitHub Actions. Conftest exits non-zero on a policy violation; because the Docker build is a later step in the same job, GitHub Actions marks it skipped and does not build the image.
 
 ---
 
-# Docker Build
+# Demonstration Guide: Policy Gate Failure & Recovery
 
-Build the image locally:
+To demonstrate how the Policy-as-Code pipeline catches security defects before container builds:
+
+### Step 1: Verify Policy Compliance (Pass)
+Run conftest on the repository Dockerfile:
+```bash
+conftest test Dockerfile --policy policies/ --parser dockerfile
+```
+*Result:* All 8 policy checks **PASS**.
+
+### Step 2: Run a Reproducible Failure (Fail)
+Use an intentionally insecure fixture. For example:
+```bash
+conftest test fixtures/Dockerfile.no-healthcheck --policy policies/ --parser dockerfile
+```
+*Result:* **FAIL** — `Dockerfile must define a HEALTHCHECK`. A non-zero policy result blocks the later CI build step.
+
+Other fixtures demonstrate root execution, a mutable base tag, a missing `WORKDIR`, a sensitive copy source, and a hardcoded secret assignment:
+
+```bash
+conftest test fixtures/Dockerfile.root --policy policies/ --parser dockerfile
+conftest test fixtures/Dockerfile.latest --policy policies/ --parser dockerfile
+conftest test fixtures/Dockerfile.no-workdir --policy policies/ --parser dockerfile
+conftest test fixtures/Dockerfile.healthcheck-none --policy policies/ --parser dockerfile
+conftest test fixtures/Dockerfile.sensitive-copy --policy policies/ --parser dockerfile
+conftest test fixtures/Dockerfile.sensitive-add --policy policies/ --parser dockerfile
+conftest test fixtures/Dockerfile.secret --policy policies/ --parser dockerfile
+```
+
+The secret-reference example is expected to pass, confirming that variable references and ordinary text are not treated as hardcoded credentials:
+
+```bash
+conftest test fixtures/Dockerfile.secret-reference --policy policies/ --parser dockerfile
+```
+
+### Step 3: Policy Recovery (Fix & Pass)
+The fixtures are demonstrations only; the project `Dockerfile` remains secure. Fix the relevant instruction in a working Dockerfile, then re-run:
+```bash
+conftest test Dockerfile --policy policies/ --parser dockerfile
+```
+*Result:* **PASS** — The Docker build stage is allowed to proceed.
+
+---
+
+# Docker Build & Deployment
+
+## Docker Build
 
 ```bash
 docker build -t secure-devsecops-api .
 ```
 
-Run the container:
+Run container:
 
 ```bash
 docker run -d \
@@ -311,55 +320,26 @@ docker run -d \
   secure-devsecops-api
 ```
 
-Verify:
-
-```bash
-curl http://localhost:5002/health
-```
-
-Check the container user:
+Verify non-root user inside container:
 
 ```bash
 docker exec secure-api whoami
 ```
+*Expected:* `appuser`
 
-Expected:
-
-```text
-appuser
-```
-
----
-
-# Docker Compose Deployment
-
-The project uses Docker Compose to provide a reproducible deployment configuration.
-
-Start the application:
+## Docker Compose Deployment
 
 ```bash
 docker compose up -d --build
 ```
 
-Check the deployment:
-
-```bash
-docker compose ps
-```
-
-Verify the application:
-
-```bash
-curl http://localhost:5002/
-```
-
-Health check:
+Verify deployment health:
 
 ```bash
 curl http://localhost:5002/health
 ```
 
-Stop the deployment:
+Clean up deployment:
 
 ```bash
 docker compose down
@@ -369,238 +349,39 @@ docker compose down
 
 # CI/CD Pipeline
 
-The GitHub Actions workflow is located at:
+The GitHub Actions workflow is located at `.github/workflows/ci.yml`.
 
-```text
-.github/workflows/ci.yml
-```
-
-The pipeline performs the following stages:
+Execution sequence:
 
 ```text
 Checkout Repository
         ↓
-Set Up Python
+Set Up Python 3.12
         ↓
 Install Dependencies
         ↓
-Run Pytest
+Run Pytest Suite
         ↓
-Install Conftest
+Install OPA / Conftest
         ↓
-Validate Dockerfile Policies
-        ↓
+Validate Dockerfile Policies (OPA)
+        ↓ (Build blocked if policy fails)
 Build Docker Image
 ```
-
-The security policy stage occurs **before the Docker image build**.
-
-Therefore:
-
-```text
-Policy PASS
-    ↓
-Docker Build
-```
-
-while:
-
-```text
-Policy FAIL
-    ↓
-Pipeline Stops
-    ↓
-Docker Build does not execute
-```
-
----
-
-# Security Gate Demonstrations
-
-The policy enforcement has been tested using intentionally insecure Dockerfiles.
-
-## Test 1 — Root User
-
-Changing:
-
-```dockerfile
-USER appuser
-```
-
-to:
-
-```dockerfile
-USER root
-```
-
-causes the Conftest stage to fail.
-
-Result:
-
-```text
-pytest                         PASS
-Conftest policy validation    FAIL
-Docker build                  SKIPPED
-```
-
----
-
-## Test 2 — Unapproved Base Image
-
-Changing:
-
-```dockerfile
-FROM python:3.12-slim
-```
-
-to:
-
-```dockerfile
-FROM ubuntu:24.04
-```
-
-causes the approved-base-image policy to fail.
-
-Result:
-
-```text
-pytest                         PASS
-Conftest policy validation    FAIL
-Docker build                  SKIPPED
-```
-
----
-
-## Test 3 — Mutable `latest` Tag
-
-Changing:
-
-```dockerfile
-FROM python:3.12-slim
-```
-
-to:
-
-```dockerfile
-FROM python:latest
-```
-
-causes the `latest` tag policy to fail.
-
-Result:
-
-```text
-pytest                         PASS
-Conftest policy validation    FAIL
-Docker build                  SKIPPED
-```
-
-These tests demonstrate that the security policies are actively enforcing CI pipeline behavior rather than simply existing as documentation.
-
----
-
-# DevSecOps Security Model
-
-The project follows the principle of shifting security checks earlier into the software development lifecycle.
-
-Instead of:
-
-```text
-Code
- ↓
-Build
- ↓
-Deploy
- ↓
-Security Review
-```
-
-the project implements:
-
-```text
-Code
- ↓
-Automated Tests
- ↓
-Security Policy Validation
- ↓
-Build
- ↓
-Deploy
-```
-
-This allows insecure container configurations to be rejected automatically before deployment.
-
----
-
-# Current Security Controls
-
-| Control                     | Enforcement    |
-| --------------------------- | -------------- |
-| No root container execution | OPA/Conftest   |
-| No `latest` base-image tag  | OPA/Conftest   |
-| Approved base image         | OPA/Conftest   |
-| Explicit USER instruction   | OPA/Conftest   |
-| Application functionality   | Pytest         |
-| Containerization            | Docker         |
-| Deployment reproducibility  | Docker Compose |
-| CI automation               | GitHub Actions |
-
----
-
-# Future Enhancements
-
-The current application is intentionally lightweight so that the DevSecOps pipeline can be demonstrated clearly.
-
-Future versions can introduce a more realistic application and additional security policies, such as:
-
-* Approved package versions
-* Dependency vulnerability checks
-* Required health checks
-* Required Docker `LABEL` metadata
-* Restricted exposed ports
-* Resource limits
-* Read-only container filesystem
-* Dropping unnecessary Linux capabilities
-* Prohibiting privileged containers
-* Secrets detection
-* Image vulnerability scanning
-* SBOM generation
-* Container image signing
-* Policy validation for Docker Compose
-* Separate development and production configurations
-
-The policy set should evolve according to the requirements of the final application rather than adding security controls that are unrelated to the application's architecture.
 
 ---
 
 # Project Status
 
-### Completed
+### Completed Features
 
-* [x] Flask application
-* [x] Automated application tests
-* [x] Docker containerization
-* [x] Non-root container execution
-* [x] OPA/Conftest integration
-* [x] Four Dockerfile security policies
-* [x] Local policy validation
-* [x] GitHub Actions CI pipeline
-* [x] Automated policy gating
-* [x] Docker image build in CI
-* [x] Docker Compose deployment
-* [x] Security-failure demonstrations
-
-### Next Development Stage
-
-Replace the demonstration Flask application with a more realistic application and extend the policy set according to its actual security and deployment requirements.
-
----
-
-# Core Concept
-
-The central concept of this project is:
-
-> **Security policies should be executable controls within the CI/CD pipeline rather than recommendations that are checked only after deployment.**
-
-The pipeline therefore treats security policy violations as build-blocking conditions.
+* [x] Refactored Flask API with Application Factory Pattern (`create_app()`)
+* [x] Implemented SQLAlchemy ORM Configuration model & persistent storage
+* [x] Implemented full CRUD REST API endpoints (`/configs`)
+* [x] Environment-specific configuration classes (`Development`, `Production`, `Testing`)
+* [x] Blueprint-based routing and centralized logging
+* [x] Comprehensive Pytest suite with isolated test database setup/teardown
+* [x] Preserved Dockerfile structure and compatibility
+* [x] OPA / Conftest policy gating (8 active policy checks)
+* [x] Demonstrated policy failure and recovery scenarios
+* [x] Local verification & GitHub Actions CI pipeline compatibility
