@@ -10,7 +10,7 @@ COPY app/ .
 
 RUN useradd --create-home appuser
 
-USER root
+USER appuser
 
 EXPOSE 5000
 
