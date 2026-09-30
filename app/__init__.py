@@ -57,6 +57,13 @@ def create_app(config_name=None):
 
     register_routes(app)
 
+    # Register policy checker GUI blueprint
+    try:
+        from app.checker import checker_bp
+    except (ImportError, ModuleNotFoundError):
+        from checker import checker_bp
+    app.register_blueprint(checker_bp)
+
     # Ensure database tables are created
     with app.app_context():
         db.create_all()
