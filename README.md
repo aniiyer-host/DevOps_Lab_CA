@@ -206,6 +206,21 @@ Conftest parses the `Dockerfile` and evaluates it against these policies.
 The secret rule inspects only secret-like `ENV`/`ARG` assignments. It permits common variable references and placeholders; it is a guard against obvious mistakes, not a general-purpose secret scanner.
 `fixtures/Dockerfile.secret-reference` is a passing example: it uses `${API_TOKEN}` and includes ordinary `PASSWORD_LABEL` and `RUN` text without triggering the rule.
 
+### Security Rationale — Why Each Policy Exists
+
+Each policy maps directly to a real attack vector or failure mode observed in production container environments.
+
+| Policy | Attack / Risk Prevented | Real-World Context |
+| --- | --- | --- |
+| **Deny root execution** | If a container process is compromised, running as root gives an attacker host-level privileges during a container escape. | CVE-2019-5736 (runc vulnerability) allowed container breakout — impact was drastically amplified for root-running containers. Non-root containers confine the blast radius to the container only. |
+| **Deny `latest` tag** | The `latest` tag is mutable — the upstream image it points to can change silently between builds. A build that passes today may ship a newly-vulnerable OS layer tomorrow with no code change. | Silent base-image drift is a recognised supply chain risk. Pinning to an explicit digest or version tag ensures reproducible, auditable builds. |
+| **Require approved base image** | Arbitrary base images may contain malware, backdoors, or unpatched CVEs. Restricting to a single vetted image eliminates an entire class of supply chain attack. | Typosquatting attacks on Docker Hub (e.g. `pythn`, `pyhton`) have distributed trojaned images to unsuspecting users. An allowlist makes this impossible at build time. |
+| **Require explicit `USER`** | Docker's default runtime user is `root`. Without an explicit `USER` instruction, every container runs with full privileges unless overridden at `docker run` time — a dangerous implicit assumption. | The CIS Docker Benchmark (rule 4.1) mandates non-root container users as a baseline security control precisely because the default is root. |
+| **Require `HEALTHCHECK`** | Without a health check, Docker and orchestrators cannot distinguish a crashed application from a healthy one. A broken service continues receiving traffic silently, causing hidden downtime. | Health checks are mandatory in production Docker Compose and Kubernetes deployments. Their absence is a common cause of "zombie" containers that appear running but serve errors. |
+| **Require `WORKDIR`** | Without an explicit `WORKDIR`, `RUN`, `COPY`, and `CMD` instructions execute relative to `/` (the filesystem root). Files can be silently placed in unexpected locations, overwriting system binaries or configuration. | This is a path-confusion vulnerability class — predictable working directories are a prerequisite for reproducible and auditable builds. |
+| **Deny sensitive `COPY`/`ADD` sources** | Docker image layers are immutable and cumulative. Even if a secret file is deleted in a later layer, it remains fully readable in the earlier layer via `docker history` or by exporting the image tarball. | Thousands of public Docker Hub images have been found to contain `.env` files with live database credentials, AWS keys, and API tokens — baked in and never removed. |
+| **Deny hardcoded secrets in `ENV`/`ARG`** | `ENV` values are stored in the image manifest and are visible to anyone with `docker inspect` or `docker history` access — including anyone who pulls the image from a registry. | GitGuardian's State of Secrets Sprawl report consistently identifies hardcoded credentials in container images as one of the top sources of cloud credential exposure. |
+
 ---
 
 # Local Development & Testing
